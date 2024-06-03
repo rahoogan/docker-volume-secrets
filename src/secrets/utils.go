@@ -16,6 +16,9 @@ import (
 	"golang.org/x/term"
 )
 
+const AES_KEY_LENGTH int = 32
+const AES_GCM_NONCE_LENGTH int = 12
+
 func ensureDir(dirName string, mode os.FileMode) error {
 	err := os.MkdirAll(dirName, mode)
 	if err != nil {
@@ -29,7 +32,7 @@ type PasswordPrompter struct {
 	prompt string
 }
 
-func (prompter *PasswordPrompter) PromptForData(prompt string) (string, error) {
+func (prompter *PasswordPrompter) PromptForData(prompt string) (data string, err error) {
 	prompter.prompt = prompt
 	fmt.Printf("%s: ", prompt)
 	pwd, err := term.ReadPassword(int(os.Stdin.Fd()))
@@ -38,6 +41,15 @@ func (prompter *PasswordPrompter) PromptForData(prompt string) (string, error) {
 	}
 	fmt.Println()
 	return string(pwd), nil
+}
+
+type RandomGenerator struct{}
+
+func (generator *RandomGenerator) GenerateData(dataContainer []byte, length int) error {
+	if _, err := io.ReadFull(rand.Reader, dataContainer); err != nil {
+		return err
+	}
+	return nil
 }
 
 func cacheEncryptionKey(key []byte, passwordName string, passwordDir string) error {
@@ -73,7 +85,7 @@ func getCachedEncryptionKey(passwordName string, passwordDir string) ([]byte, er
 	return nil, nil
 }
 
-func getEncryptionKey(prompter Prompter, cachePath string, encryptionType EncryptionAlgorithm) (key []byte, err error) {
+func getEncryptionKey(prompter Prompter, cachePath string, randGenerator Generator) (key []byte, err error) {
 	key, _ = getCachedEncryptionKey("master_key", cachePath)
 	if key == nil {
 		pwd, err := prompter.PromptForData("password: ")
@@ -81,7 +93,7 @@ func getEncryptionKey(prompter Prompter, cachePath string, encryptionType Encryp
 			log.Error().Err(err).Msg("Could not read password")
 			return nil, err
 		}
-		key, err = deriveKey(pwd, keyLengths[encryptionType])
+		key, err = deriveKey(pwd, AES_KEY_LENGTH, randGenerator)
 		if err != nil {
 			return nil, err
 		}
@@ -89,66 +101,68 @@ func getEncryptionKey(prompter Prompter, cachePath string, encryptionType Encryp
 	return key, nil
 }
 
-func deriveKey(passwordString string, keySize int) (key []byte, err error) {
+func deriveKey(passwordString string, keySize int, randGenerator Generator) (key []byte, err error) {
 	// Convert password to encryption key
 	// argon2 is the latest key derivation function
 	key = make([]byte, keySize+aes.BlockSize)
 	saltData := key[keySize : keySize+aes.BlockSize]
-	if _, err := io.ReadFull(rand.Reader, saltData); err != nil {
+	err = randGenerator.GenerateData(saltData, aes.BlockSize)
+	if err != nil {
 		log.Error().Err(err).Msg("Error deriving key from password: could not generate random salt")
-		return nil, err
 	}
 	keyData := argon2.IDKey([]byte(passwordString), saltData, 1, 64*1024, 4, 32)
 	copy(key[:32], keyData[:])
 	return key, nil
 }
 
-func encryptWithKey(encryptionKey []byte, keySize int, plaintext []byte) ([]byte, error) {
+func encryptWithKey(encryptionKey []byte, keySize int, randGenerator Generator, plaintext []byte) ([]byte, error) {
 	block, err := aes.NewCipher(encryptionKey[:keySize])
 	if err != nil {
-		log.Error().Err(err).Msg("Error initializing encryption key")
+		log.Error().Err(err).Msg("Error encrypting data: could not initialize encryption key")
 		return nil, err
 	}
 
-	ciphertext := make([]byte, aes.BlockSize+len(plaintext))
-	iv := ciphertext[:aes.BlockSize]
-	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
-		log.Error().Err(err).Msg("Error encrypting data: could not generate random iv")
+	nonce := make([]byte, AES_GCM_NONCE_LENGTH)
+	err = randGenerator.GenerateData(nonce, AES_GCM_NONCE_LENGTH)
+	if err != nil {
+		log.Error().Err(err).Msg("Error encrypting data: could not generate random nonce")
 		return nil, err
 	}
 
-	stream := cipher.NewCTR(block, iv)
-	stream.XORKeyStream(ciphertext[aes.BlockSize:], plaintext)
+	aesgcm, err := cipher.NewGCM(block)
+	if err != nil {
+		log.Error().Err(err).Msg("Error encrypting data: could not create new AES GCM")
+		return nil, err
+	}
+	ciphertext := aesgcm.Seal(nil, nonce, plaintext, nil)
+	ciphertext = append(nonce, ciphertext...)
 
-	// TODO: Security - Sign with private key for authN
-	// See: https://pkg.go.dev/crypto/cipher#NewCBCEncrypter
 	return ciphertext, nil
 }
 
 func decryptWithKey(encryptionKey []byte, keySize int, ciphertext []byte) (plaintext string, err error) {
 	block, err := aes.NewCipher(encryptionKey[:keySize])
 	if err != nil {
-		log.Error().Err(err).Msg("Error initializing encryption key")
+		log.Error().Err(err).Msg("Error decrypting data: could not initialize encryption key")
 		return "", err
 	}
 
-	if len(ciphertext) < aes.BlockSize {
-		err := errors.New("ciphertext is too short, cannot decrypt")
+	if len(ciphertext) < AES_GCM_NONCE_LENGTH {
+		err := errors.New("error decrypting data: ciphertext is too short")
 		log.Error().Err(err)
 		return "", err
 	}
 
-	iv := ciphertext[:aes.BlockSize]
-	ciphertext = ciphertext[aes.BlockSize:]
+	nonce := ciphertext[:AES_GCM_NONCE_LENGTH]
+	ciphertext = ciphertext[AES_GCM_NONCE_LENGTH:]
 
-	// CBC mode always works in whole blocks.
-	if len(ciphertext)%aes.BlockSize != 0 {
-		panic("ciphertext is not a multiple of the block size")
+	aesgcm, err := cipher.NewGCM(block)
+	if err != nil {
+		log.Error().Err(err).Msg("Error decrypting data: could not initialize encryption key")
 	}
-
-	plaintextData := make([]byte, len(plaintext))
-	stream := cipher.NewCTR(block, iv)
-	stream.XORKeyStream(plaintextData, ciphertext)
-
+	plaintextData, err := aesgcm.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		log.Error().Err(err).Msg("Error decrypting data: could not decrypt using key")
+	}
 	return string(plaintextData), nil
 }

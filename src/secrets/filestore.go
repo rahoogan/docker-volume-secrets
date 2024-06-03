@@ -2,6 +2,7 @@ package secrets
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -36,13 +37,18 @@ type FileStoreDriver struct {
 	SecretsPath      string
 	EncryptionType   EncryptionAlgorithm
 	PasswordPrompter Prompter
+	RandomGenerator  Generator
 }
 
 type Prompter interface {
 	PromptForData(prompt string) (data string, err error)
 }
 
-func (driver *FileStoreDriver) Setup(prompter Prompter) error {
+type Generator interface {
+	GenerateData(dataContainer []byte, length int) error
+}
+
+func (driver *FileStoreDriver) Setup(prompter Prompter, dataGenerator Generator) error {
 	secretPath, ok := os.LookupEnv("DOCKER_VOLUME_SECRETS_SECERT_PATH")
 	if !ok {
 		if driver.DataPath == "" {
@@ -71,6 +77,7 @@ func (driver *FileStoreDriver) Setup(prompter Prompter) error {
 			encAlg = AES192
 		}
 	}
+	driver.EncryptionType = encAlg
 
 	pwd, err := prompter.PromptForData("password: ")
 	if err != nil {
@@ -78,7 +85,7 @@ func (driver *FileStoreDriver) Setup(prompter Prompter) error {
 		return err
 	}
 
-	key, err := deriveKey(pwd, keyLengths[driver.EncryptionType])
+	key, err := deriveKey(pwd, keyLengths[driver.EncryptionType], dataGenerator)
 	if err != nil {
 		return err
 	}
@@ -90,8 +97,8 @@ func (driver *FileStoreDriver) Setup(prompter Prompter) error {
 	// Set secret storage location
 	driver.DataPath = dataPath
 	driver.SecretsPath = secretPath
-	driver.EncryptionType = encAlg
 	driver.PasswordPrompter = prompter
+	driver.RandomGenerator = dataGenerator
 
 	ensureDir(driver.DataPath, 0755)
 	ensureDir(driver.SecretsPath, 0755)
@@ -99,17 +106,19 @@ func (driver *FileStoreDriver) Setup(prompter Prompter) error {
 }
 
 func (driver *FileStoreDriver) Create(createrequest *CreateSecret) error {
-	key, _ := getEncryptionKey(driver.PasswordPrompter, driver.DataPath, driver.EncryptionType)
+	key, _ := getEncryptionKey(driver.PasswordPrompter, driver.DataPath, driver.RandomGenerator)
 	if key == nil {
 		err := errors.New("could not get encryption key for generating secret")
 		log.Error().Err(err).Msg("")
 		return err
 	}
 
-	encryptedData, err := encryptWithKey(key, keyLengths[driver.EncryptionType], []byte(createrequest.Secret.Value))
+	encryptedData, err := encryptWithKey(key, AES_KEY_LENGTH, driver.RandomGenerator, []byte(createrequest.Secret.Value))
 	if err != nil {
 		return err
 	}
+
+	log.Debug().Msg(fmt.Sprintf("%x", encryptedData))
 
 	err = os.WriteFile(filepath.Join(driver.SecretsPath, createrequest.Secret.Name), encryptedData, 0600)
 	if err != nil {
@@ -120,7 +129,7 @@ func (driver *FileStoreDriver) Create(createrequest *CreateSecret) error {
 }
 
 func (driver *FileStoreDriver) Get(getrequest *GetSecret) (secretresponse GetSecretResponse, err error) {
-	key, _ := getEncryptionKey(driver.PasswordPrompter, driver.DataPath, driver.EncryptionType)
+	key, _ := getEncryptionKey(driver.PasswordPrompter, driver.DataPath, driver.RandomGenerator)
 	if key == nil {
 		err := errors.New("could not get encryption key for retrieving secret")
 		log.Error().Err(err).Msg("")
@@ -131,7 +140,7 @@ func (driver *FileStoreDriver) Get(getrequest *GetSecret) (secretresponse GetSec
 		log.Error().Err(err).Msg("Could not read secret file")
 		return GetSecretResponse{}, err
 	}
-	plaintext, err := decryptWithKey(key, keyLengths[driver.EncryptionType], ciphertext)
+	plaintext, err := decryptWithKey(key, AES_KEY_LENGTH, ciphertext)
 	if err != nil {
 		log.Error().Err(err).Msg("Could not decrypt secret file")
 		return GetSecretResponse{}, err
