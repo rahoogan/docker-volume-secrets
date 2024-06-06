@@ -10,14 +10,6 @@ import (
 	"testing"
 )
 
-type MockPasswordPrompter struct {
-	prompt string
-}
-
-func (prompter *MockPasswordPrompter) PromptForData(prompt string) (data string, err error) {
-	return "test_password", nil
-}
-
 type MockRandomGenerator struct {
 	name string
 }
@@ -34,7 +26,6 @@ type TestSetupData struct {
 	dataDir    string
 	secretsDir string
 	testDir    string
-	prompter   MockPasswordPrompter
 	generator  MockRandomGenerator
 }
 
@@ -54,9 +45,8 @@ func SetupDriver() TestSetupData {
 		SecretsPath:    setupData.secretsDir,
 		EncryptionType: AES256,
 	}
-	setupData.prompter = MockPasswordPrompter{prompt: "test prompt"}
 	setupData.generator = MockRandomGenerator{name: "mocked"}
-	driver.Setup(&setupData.prompter, &setupData.generator)
+	driver.Setup(&setupData.generator)
 	setupData.driver = driver
 	return setupData
 }
@@ -64,7 +54,7 @@ func SetupDriver() TestSetupData {
 func TestSecretsSetup(t *testing.T) {
 	setupData := SetupDriver()
 	// Expect that password cache file was created
-	keyPath := filepath.Join(setupData.dataDir, fmt.Sprintf("%d", os.Geteuid()), "docker-secrets-volume", "master_key")
+	keyPath := filepath.Join(setupData.driver.DataPath, fmt.Sprintf("%s_aes256", MASTER_KEY_NAME))
 	_, err := os.Stat(keyPath)
 	if err != nil {
 		t.Errorf("master key file not created in: %s", keyPath)
@@ -75,17 +65,17 @@ func TestSecretsSetup(t *testing.T) {
 	}
 
 	// Expect AES256 master key by default
-	expectedKey := "842efc60a69ec827bfa16e85a4486a0dc5d3e9a3e20857ded768f0c6fee4498d000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001010101010101010101010101010101"
+	expectedKey := "e6b2fef84a6fc720e1799b3c97785524d1904ffd4d67ac83bdf27e81dcd74c9d01010101010101010101010101010101"
 
-	data, _ := hex.DecodeString(expectedKey)
+	data, err := hex.DecodeString(expectedKey)
 	if err != nil {
 		t.Errorf("Error decoding master key hexstring")
 	}
-	if len(masterKey) != 272 {
-		t.Errorf("Expected key length: %v, Got: %v", 272, len(masterKey))
+	if len(masterKey) != 48 {
+		t.Errorf("Expected key length: %v, Got: %v", 48, len(masterKey))
 	}
 	if !bytes.Equal(masterKey, data) {
-		t.Errorf("Expected master key value: %x, Got: %v", expectedKey, masterKey)
+		t.Errorf("Expected master key value: %x, Got: %v", expectedKey, hex.EncodeToString(masterKey))
 	}
 
 	// Expect salt of length 16 to be appended at the end of key
@@ -94,7 +84,7 @@ func TestSecretsSetup(t *testing.T) {
 	if err != nil {
 		t.Errorf("Error decoding salt hexstring")
 	}
-	salt := masterKey[256:]
+	salt := masterKey[32:]
 	if !bytes.Equal(salt, data) {
 		t.Errorf("Expected salt value: %x, Got: %x", expectedSalt, salt)
 	}
@@ -111,7 +101,7 @@ func TestSecretSetupEnvVars(t *testing.T) {
 	t.Setenv("DOCKER_VOLUME_SECRETS_DATA_PATH", setupData.dataDir)
 	t.Setenv("DOCKER_VOLUME_SECRETS_ENC_TYPE", string(AES128))
 
-	setupData.driver.Setup(&setupData.prompter, &setupData.generator)
+	setupData.driver.Setup(&setupData.generator)
 
 	if setupData.driver.DataPath != setupData.dataDir {
 		t.Errorf("Data path not set from env var. Expected: %s, Got: %s", setupData.dataDir, setupData.driver.DataPath)
@@ -124,13 +114,13 @@ func TestSecretSetupEnvVars(t *testing.T) {
 	}
 
 	// Expect AES128 key to be created
-	keyPath := filepath.Join(setupData.dataDir, fmt.Sprintf("%d", os.Geteuid()), "docker-secrets-volume", "master_key")
+	keyPath := filepath.Join(setupData.driver.DataPath, fmt.Sprintf("%s_aes128", MASTER_KEY_NAME))
 	masterKey, err := os.ReadFile(keyPath)
 	if err != nil {
 		t.Errorf("master key could not be read: %s", keyPath)
 	}
-	if len(masterKey) != 144 {
-		t.Errorf("Expected key length: %v, Got: %v", 144, len(masterKey))
+	if len(masterKey) != 32 {
+		t.Errorf("Expected key length: %v, Got: %v", 32, len(masterKey))
 	}
 }
 
@@ -149,7 +139,7 @@ func TestSecretCreate(t *testing.T) {
 		t.Errorf("Expected secret file to be created in: %s, Got: %v", keyPath, pathError)
 	}
 
-	expectedEncryptedSecret := "01010101010101010101010145c0333d50048b7c01068006eab989bb7970b0"
+	expectedEncryptedSecret := "010101010101010101010101114d3cf2386e5248108518775286639865b9f9"
 	expectedData, err := hex.DecodeString(expectedEncryptedSecret)
 	if err != nil {
 		t.Errorf("Error decoding secret string: %v", err)

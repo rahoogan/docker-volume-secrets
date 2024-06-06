@@ -4,7 +4,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strconv"
 
 	"github.com/rs/zerolog/log"
 )
@@ -21,22 +20,22 @@ const (
 	DEFAULT_SECRET_PATH      string              = "/run/docker/plugins/docker-secrets-volume/secrets"
 	DEFAULT_SECRET_DATA_PATH string              = "/run/docker/plugins/docker-secrets-volume/data"
 	DEFAULT_ENCRYPTION_TYPE  EncryptionAlgorithm = AES256
+	MASTER_KEY_NAME          string              = "master_key"
 )
 
 var (
-	keyLengths = map[EncryptionAlgorithm]int{
-		AES128: 128,
-		AES192: 192,
-		AES256: 256,
+	keyLengthBytes = map[EncryptionAlgorithm]int{
+		AES128: 16,
+		AES192: 24,
+		AES256: 32,
 	}
 )
 
 type FileStoreDriver struct {
-	DataPath         string
-	SecretsPath      string
-	EncryptionType   EncryptionAlgorithm
-	PasswordPrompter Prompter
-	RandomGenerator  Generator
+	DataPath        string
+	SecretsPath     string
+	EncryptionType  EncryptionAlgorithm
+	RandomGenerator Generator
 }
 
 type Prompter interface {
@@ -47,7 +46,7 @@ type Generator interface {
 	GenerateData(dataContainer []byte, length int) error
 }
 
-func (driver *FileStoreDriver) Setup(prompter Prompter, dataGenerator Generator) error {
+func (driver *FileStoreDriver) Setup(dataGenerator Generator) error {
 	secretPath, ok := os.LookupEnv("DOCKER_VOLUME_SECRETS_SECERT_PATH")
 	if !ok {
 		if driver.DataPath == "" {
@@ -78,34 +77,32 @@ func (driver *FileStoreDriver) Setup(prompter Prompter, dataGenerator Generator)
 	}
 	driver.EncryptionType = encAlg
 
-	pwd, err := prompter.PromptForData("password: ")
-	if err != nil {
-		log.Error().Err(err).Msg("Could not read password")
-		return err
-	}
-
-	key, err := deriveKey(pwd, keyLengths[driver.EncryptionType], dataGenerator)
-	if err != nil {
-		return err
-	}
-
-	// Cache encryption key for later re-use
-	passwordDir := filepath.Join(dataPath, strconv.Itoa(os.Geteuid()), "docker-secrets-volume")
-	cacheEncryptionKey(key, "master_key", passwordDir)
-
 	// Set secret storage location
 	driver.DataPath = dataPath
 	driver.SecretsPath = secretPath
-	driver.PasswordPrompter = prompter
 	driver.RandomGenerator = dataGenerator
 
-	ensureDir(driver.DataPath, 0755)
-	ensureDir(driver.SecretsPath, 0755)
+	err := ensureDir(driver.DataPath, 0755)
+	if err != nil {
+		return err
+	}
+	err = ensureDir(driver.SecretsPath, 0755)
+	if err != nil {
+		return err
+	}
+	key, err := getEncryptionKey(driver)
+	if err != nil {
+		return err
+	}
+	if key == nil {
+		err := errors.New("got empty encryption key. cannot setup plugin")
+		return err
+	}
 	return nil
 }
 
 func (driver *FileStoreDriver) Create(createrequest *CreateSecret) error {
-	key, _ := getEncryptionKey(driver.PasswordPrompter, driver.DataPath, driver.RandomGenerator)
+	key, _ := getEncryptionKey(driver)
 	if key == nil {
 		err := errors.New("could not get encryption key for generating secret")
 		log.Error().Err(err).Msg("")
@@ -134,7 +131,7 @@ func (driver *FileStoreDriver) Create(createrequest *CreateSecret) error {
 }
 
 func (driver *FileStoreDriver) Get(getrequest *GetSecret) (secretresponse GetSecretResponse, err error) {
-	key, _ := getEncryptionKey(driver.PasswordPrompter, driver.DataPath, driver.RandomGenerator)
+	key, _ := getEncryptionKey(driver)
 	if key == nil {
 		err := errors.New("could not get encryption key for retrieving secret")
 		log.Error().Err(err).Msg("")
