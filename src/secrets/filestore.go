@@ -109,7 +109,7 @@ func (driver *FileStoreDriver) Create(createrequest *CreateSecret) error {
 		return err
 	}
 
-	encryptedData, err := encryptWithKey(key, AES_KEY_LENGTH, driver.RandomGenerator, []byte(createrequest.Secret.Value))
+	encryptedData, err := encryptWithKey(key, keyLengthBytes[driver.EncryptionType], driver.RandomGenerator, []byte(createrequest.Secret.Value))
 	if err != nil {
 		return err
 	}
@@ -142,7 +142,7 @@ func (driver *FileStoreDriver) Get(getrequest *GetSecret) (secretresponse GetSec
 		log.Error().Err(err).Msg("Could not read secret file")
 		return GetSecretResponse{}, err
 	}
-	plaintext, err := decryptWithKey(key, AES_KEY_LENGTH, ciphertext)
+	plaintext, err := decryptWithKey(key, keyLengthBytes[driver.EncryptionType], ciphertext)
 	if err != nil {
 		log.Error().Err(err).Msg("Could not decrypt secret file")
 		return GetSecretResponse{}, err

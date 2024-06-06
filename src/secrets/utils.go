@@ -17,7 +17,6 @@ import (
 
 const (
 	RANDOM_DATA_LENGTH       = 50
-	AES_KEY_LENGTH       int = 32
 	AES_GCM_NONCE_LENGTH int = 12
 )
 
