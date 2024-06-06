@@ -2,7 +2,6 @@ package secrets
 
 import (
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -118,9 +117,15 @@ func (driver *FileStoreDriver) Create(createrequest *CreateSecret) error {
 		return err
 	}
 
-	log.Debug().Msg(fmt.Sprintf("%x", encryptedData))
+	secretFile := filepath.Join(driver.SecretsPath, createrequest.Secret.Name)
 
-	err = os.WriteFile(filepath.Join(driver.SecretsPath, createrequest.Secret.Name), encryptedData, 0600)
+	file, err := os.Stat(secretFile)
+	if file != nil && !file.IsDir() && err == nil {
+		err := errors.New("secret already exists")
+		return err
+	}
+
+	err = os.WriteFile(secretFile, encryptedData, 0600)
 	if err != nil {
 		log.Error().Err(err).Msg("Could not create secret")
 		return err
@@ -152,14 +157,17 @@ func (driver *FileStoreDriver) List() (listresponse *ListSecretResponse, err err
 	files, err := os.ReadDir(driver.SecretsPath)
 	if err != nil {
 		log.Error().Err(err).Msg("Could not read secrets dir")
-		return &ListSecretResponse{}, err
+		return &ListSecretResponse{Secrets: make([]SecretMetadata, 0)}, err
 	}
 	secrets := []SecretMetadata{}
 	resp := ListSecretResponse{Secrets: secrets}
-	for i, file := range files {
-		item := SecretMetadata{Name: file.Name()}
-		secrets[i] = item
+	for _, file := range files {
+		if !file.IsDir() {
+			item := SecretMetadata{Name: file.Name()}
+			secrets = append(secrets, item)
+		}
 	}
+	resp.Secrets = secrets
 	return &resp, nil
 }
 
