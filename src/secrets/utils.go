@@ -20,6 +20,7 @@ const (
 	AES_GCM_NONCE_LENGTH int = 12
 )
 
+// Ensure a directory exists by creating it if it doesn't exist
 func ensureDir(dirName string, mode os.FileMode) error {
 	err := os.MkdirAll(dirName, mode)
 	if err != nil {
@@ -33,6 +34,7 @@ type PasswordPrompter struct {
 	prompt string
 }
 
+// Implements the Prompter interface to prompt a user for data
 func (prompter *PasswordPrompter) PromptForData(prompt string) (data string, err error) {
 	prompter.prompt = prompt
 	fmt.Printf("%s: ", prompt)
@@ -46,6 +48,7 @@ func (prompter *PasswordPrompter) PromptForData(prompt string) (data string, err
 
 type RandomGenerator struct{}
 
+// Implements the Generator interface to generate random data
 func (generator *RandomGenerator) GenerateData(dataContainer []byte, length int) error {
 	if _, err := io.ReadFull(rand.Reader, dataContainer); err != nil {
 		return err
@@ -53,6 +56,7 @@ func (generator *RandomGenerator) GenerateData(dataContainer []byte, length int)
 	return nil
 }
 
+// Derives a fixed size key based on a key derivation function (currently argon2) based on secret input data
 func deriveKey(randomData []byte, keySize int, randGenerator Generator) (key []byte, err error) {
 	// Convert password to encryption key
 	// argon2 is the latest key derivation function
@@ -67,7 +71,8 @@ func deriveKey(randomData []byte, keySize int, randGenerator Generator) (key []b
 	return key, nil
 }
 
-func getEncryptionKey(driver *FileStoreDriver) (key []byte, err error) {
+// Retrieves an existing encryption key from disk or creates a new one
+func getOrCreateEncryptionKey(driver *FileStoreDriver) (key []byte, err error) {
 	keyPath := filepath.Join(driver.DataPath, fmt.Sprintf("%s_%s", MASTER_KEY_NAME, driver.EncryptionType))
 	// Create a random encryption key if one does not exist
 	file, _ := os.Stat(keyPath)
@@ -98,6 +103,7 @@ func getEncryptionKey(driver *FileStoreDriver) (key []byte, err error) {
 	return key, nil
 }
 
+// Encrypts data (currently using AES GCM) using a provided key and random generator (to generate the nonce)
 func encryptWithKey(encryptionKey []byte, keySize int, randGenerator Generator, plaintext []byte) ([]byte, error) {
 	block, err := aes.NewCipher(encryptionKey[:keySize])
 	if err != nil {
@@ -123,6 +129,7 @@ func encryptWithKey(encryptionKey []byte, keySize int, randGenerator Generator, 
 	return ciphertext, nil
 }
 
+// Decrypts data using a provided key
 func decryptWithKey(encryptionKey []byte, keySize int, ciphertext []byte) (plaintext string, err error) {
 	block, err := aes.NewCipher(encryptionKey[:keySize])
 	if err != nil {

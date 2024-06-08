@@ -31,6 +31,7 @@ var (
 	}
 )
 
+// An implementation of the SecretStore driver which stores secrets encrypted on disk
 type FileStoreDriver struct {
 	DataPath        string
 	SecretsPath     string
@@ -38,14 +39,18 @@ type FileStoreDriver struct {
 	RandomGenerator Generator
 }
 
+// A generic interface to describe a method to prompt a user for data
 type Prompter interface {
 	PromptForData(prompt string) (data string, err error)
 }
 
+// A generic interface to describe a method to generate data of a fixed size
 type Generator interface {
 	GenerateData(dataContainer []byte, length int) error
 }
 
+// Setup runs any steps required to setup the secrets backend.
+// Typically, this would be run before using any of the other functions
 func (driver *FileStoreDriver) Setup(dataGenerator Generator) error {
 	secretPath, ok := os.LookupEnv("DOCKER_VOLUME_SECRETS_SECERT_PATH")
 	if !ok {
@@ -90,7 +95,7 @@ func (driver *FileStoreDriver) Setup(dataGenerator Generator) error {
 	if err != nil {
 		return err
 	}
-	key, err := getEncryptionKey(driver)
+	key, err := getOrCreateEncryptionKey(driver)
 	if err != nil {
 		return err
 	}
@@ -101,8 +106,10 @@ func (driver *FileStoreDriver) Setup(dataGenerator Generator) error {
 	return nil
 }
 
+// Create stores a new secret in the secrets backend.
+// An error will be raised if the secret already exists (with the same name)
 func (driver *FileStoreDriver) Create(createrequest *CreateSecret) error {
-	key, _ := getEncryptionKey(driver)
+	key, _ := getOrCreateEncryptionKey(driver)
 	if key == nil {
 		err := errors.New("could not get encryption key for generating secret")
 		log.Error().Err(err).Msg("")
@@ -122,7 +129,7 @@ func (driver *FileStoreDriver) Create(createrequest *CreateSecret) error {
 		return err
 	}
 
-	err = os.WriteFile(secretFile, encryptedData, 0600)
+	err = os.WriteFile(secretFile, encryptedData, 0400)
 	if err != nil {
 		log.Error().Err(err).Msg("Could not create secret")
 		return err
@@ -130,26 +137,29 @@ func (driver *FileStoreDriver) Create(createrequest *CreateSecret) error {
 	return nil
 }
 
-func (driver *FileStoreDriver) Get(getrequest *GetSecret) (secretresponse GetSecretResponse, err error) {
-	key, _ := getEncryptionKey(driver)
+// Get retrieves the details of a secret stored in the secrets backend
+func (driver *FileStoreDriver) Get(getrequest *GetSecret) (secretresponse *GetSecretResponse, err error) {
+	key, _ := getOrCreateEncryptionKey(driver)
 	if key == nil {
 		err := errors.New("could not get encryption key for retrieving secret")
 		log.Error().Err(err).Msg("")
-		return GetSecretResponse{}, err
+		return &GetSecretResponse{}, err
 	}
-	ciphertext, err := os.ReadFile(filepath.Join(driver.SecretsPath, getrequest.Name))
+	secretPath := filepath.Join(driver.SecretsPath, getrequest.Name)
+	ciphertext, err := os.ReadFile(secretPath)
 	if err != nil {
 		log.Error().Err(err).Msg("Could not read secret file")
-		return GetSecretResponse{}, err
+		return &GetSecretResponse{}, err
 	}
 	plaintext, err := decryptWithKey(key, keyLengthBytes[driver.EncryptionType], ciphertext)
 	if err != nil {
 		log.Error().Err(err).Msg("Could not decrypt secret file")
-		return GetSecretResponse{}, err
+		return &GetSecretResponse{}, err
 	}
-	return GetSecretResponse{Secret: Secret{Name: getrequest.Name, Value: plaintext}}, nil
+	return &GetSecretResponse{Secret: Secret{Name: getrequest.Name, Value: plaintext, Mountpoint: secretPath}}, nil
 }
 
+// List lists all secrets stored in the secrets backend
 func (driver *FileStoreDriver) List() (listresponse *ListSecretResponse, err error) {
 	files, err := os.ReadDir(driver.SecretsPath)
 	if err != nil {
@@ -160,7 +170,7 @@ func (driver *FileStoreDriver) List() (listresponse *ListSecretResponse, err err
 	resp := ListSecretResponse{Secrets: secrets}
 	for _, file := range files {
 		if !file.IsDir() {
-			item := SecretMetadata{Name: file.Name()}
+			item := SecretMetadata{Name: file.Name(), Mountpoint: file.Type().String()}
 			secrets = append(secrets, item)
 		}
 	}
@@ -168,17 +178,44 @@ func (driver *FileStoreDriver) List() (listresponse *ListSecretResponse, err err
 	return &resp, nil
 }
 
+// Delete deletes the secret from the secret backend and cleans up any mount files
 func (driver *FileStoreDriver) Delete(deleterequest *DeleteSecret) error {
 	secretPath := filepath.Join(driver.SecretsPath, deleterequest.Name)
 	if _, err := os.Stat(secretPath); err == nil {
 		// Delete secret file
 		if err := os.Remove(secretPath); err != nil {
-			log.Error().Err(err).Msg("Secret could not be deleted: error removing secret file")
+			log.Error().Err(err).Msg("Secret could not be deleted")
 			return err
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		log.Error().Err(err).Msg("Secret could not be deleted: error checking for secret file")
 		return err
 	}
+	mountPath := filepath.Join(DRIVER_MOUNT_PATH, deleterequest.Name)
+	if _, err := os.Stat(mountPath); err == nil {
+		// Delete mount path
+		if err := os.Remove(mountPath); err != nil {
+			log.Error().Err(err).Msg("Secret mount could not be deleted")
+			return err
+		}
+	}
 	return nil
+}
+
+// Mount retrieves the plaintext secret value from the secrets backend
+// and stores it in a file in the plugin's mount directory, ready for mounting.
+func (driver *FileStoreDriver) Mount(mountrequest *MountSecret) (*SecretMetadata, error) {
+	secret, err := driver.Get((*GetSecret)(mountrequest))
+	if err != nil {
+		return nil, err
+	}
+	// Don't overwrite existing file
+	mountPath := filepath.Join(DRIVER_MOUNT_PATH, mountrequest.Name)
+	if _, err = os.Stat(mountPath); os.IsNotExist(err) {
+		err = os.WriteFile(mountPath, []byte(secret.Secret.Value), 0400)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return &SecretMetadata{Name: mountrequest.Name, Mountpoint: mountPath}, nil
 }
