@@ -29,7 +29,7 @@ func getSecretPath(secretName string) string {
 }
 
 func (driver *DockerSecretsVolumeDriver) checkSecretOk(secretName string) error {
-	secretPath := getSecretPath(secretName)
+	secretPath := filepath.Clean(getSecretPath(secretName))
 
 	// Verify secret has been registered with volume plugin
 	_, err := os.ReadFile(secretPath)
@@ -64,7 +64,7 @@ func (driver *DockerSecretsVolumeDriver) Create(request *volume.CreateRequest) e
 	}
 
 	// Check if mountpoint for secrets volume with same name already exists
-	secretPath := getSecretPath(request.Name)
+	secretPath := filepath.Clean(getSecretPath(request.Name))
 	_, err = os.ReadFile(secretPath)
 	if err != nil && os.IsNotExist(err) {
 		// Create empty file for mountpoint to indicate that secret volume has been created

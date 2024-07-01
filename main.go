@@ -45,7 +45,11 @@ func main() {
 		RequestTimeout: 0,
 		SecretsPath:    awssm.DEFAULT_DRIVER_SECRETS_PATH,
 	}
-	secretsBackend.Setup()
+	err = secretsBackend.Setup()
+	if err != nil {
+		log.Error().Err(err).Msg("Plugin could not be started")
+		panic(1)
+	}
 
 	// Initialize a docker volume driver with the secretstore backend
 	driver := volumes.DockerSecretsVolumeDriver{SecretBackend: &secretsBackend}
@@ -53,5 +57,5 @@ func main() {
 	// Plugin starts and listens on a unix socket
 	handler := volume.NewHandler(&driver)
 	fmt.Printf("Listening on %s\n", SOCKET_ADDRESS)
-	handler.ServeUnix(SOCKET_ADDRESS, 0)
+	handler.ServeUnix(SOCKET_ADDRESS, 0) // #nosec
 }

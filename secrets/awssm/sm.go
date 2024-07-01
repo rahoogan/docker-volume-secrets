@@ -14,8 +14,8 @@ import (
 )
 
 const (
-	AWSSecretAccessKeyVar   string = "AWS_SECRET_ACCESS_KEY"
-	AWSSecretAccessKeyIdVar string = "AWS_ACCESS_KEY_ID"
+	AWSSecretAccessKeyVar   string = "AWS_SECRET_ACCESS_KEY" // #nosec
+	AWSSecretAccessKeyIdVar string = "AWS_ACCESS_KEY_ID"     // #nosec
 	AWSRegionNameVar        string = "AWS_REGION"
 	AWSEndpointUrlVar       string = "AWS_ENDPOINT_URL"
 	AWSProfileVar           string = "AWS_PROFILE"
