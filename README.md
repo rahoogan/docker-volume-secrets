@@ -1,16 +1,16 @@
 # Docker Secrets Volume Plugin
 ![workflow status](https://github.com/rahoogan/docker-volume-secrets/actions/workflows/go.yml/badge.svg?main)
 
-An extensible docker volume plugin to manage remote secrets. Enables secrets to be mounted as volumes into containers.
+An extensible docker volume plugin to manage remote secrets. Enables secrets to be mounted as volumes into containers. Currently works with AWS Secrets Manager
 
-Currently works with AWS Secrets Manager ().
+Currently works with [AWS Secrets Manager](https://docs.aws.amazon.com/secretsmanager/latest/userguide/intro.html).
 
 ## 1. Installation
 
 Install from dockerhub using the managed docker plugin system:
 
 ```bash
-docker plugin install rahoogan/dsv
+docker plugin install --alias dsv rahoogan/dsv
 ```
 
 ## 2. Configure

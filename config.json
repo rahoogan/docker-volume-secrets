@@ -1,0 +1,69 @@
+{
+    "Description": "A docker volume plugin to manage secrets from remote secrets managers",
+    "Documentation": "https://docs.docker.com/engine/extend/plugins/",
+    "Entrypoint": [
+        "/docker-secrets-volume"
+    ],
+    "Env": [
+        {
+            "Description": "Enable debug logging",
+            "Name": "DEBUG",
+            "Settable": [
+                "value"
+            ],
+            "Value": "0"
+        },
+        {
+            "Description": "The AWS access key id",
+            "Name": "AWS_ACCESS_KEY_ID",
+            "Settable": [
+                "value"
+            ],
+            "Value": ""
+        },
+        {
+            "Description": "The AWS secret access key",
+            "Name": "AWS_SECRET_ACCESS_KEY",
+            "Settable": [
+                "value"
+            ],
+            "Value": ""
+        },
+        {
+            "Description": "The AWS region to use",
+            "Name": "AWS_REGION",
+            "Settable": [
+                "value"
+            ],
+            "Value": "us-east2"
+        },
+        {
+            "Description": "The AWS region to use",
+            "Name": "AWS_ENDPOINT_URL",
+            "Settable": [
+                "value"
+            ],
+            "Value": ""
+        }
+    ],
+    "Interface": {
+        "Socket": "dsv.sock",
+        "Types": [
+            "docker.volumedriver/1.0"
+        ]
+    },
+    "Linux": {
+        "Capabilities": [
+            "CAP_SYS_ADMIN"
+        ],
+        "AllowAllDevices": false,
+        "Devices": null
+    },
+    "Mounts": null,
+    "PropagatedMount": "/docker/plugins/data/secrets",
+    "Network": {
+        "Type": "host"
+    },
+    "User": {},
+    "Workdir": ""
+}
