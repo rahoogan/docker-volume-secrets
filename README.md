@@ -35,14 +35,14 @@ docker plugin enable rahoogan/dsv
 
 ```bash
 # Create a secret in secrets manager
-$ aws secrets-manager create-secret --name mysecret --secret-string "dontlookatme!"
+$ aws secretsmanager create-secret --name mysecret --secret-string "dontlookatme!"
 
 # Mount the secret as a volume in a container
-$ docker run --rm --volume-driver dsv -v mysecret:/run/secrets/hello ubuntu cat /run/secrets/hello
+$ docker run --rm --volume-driver rahoogan/dsv -v mysecret:/run/secrets/hello ubuntu cat /run/secrets/hello
 dontlookatme!
 
 # Alternatively, you could also use the --mount option
-$ docker run --rm --mount type=volume,volume-driver=dsv,src=mysecret,target=/run/secrets/mysecret ubuntu cat /run/secrets/mysecret
+$ docker run --rm --mount type=volume,volume-driver=rahoogan/dsv,src=mysecret,target=/run/secrets/mysecret ubuntu cat /run/secrets/mysecret
 dontlookatme!
 ```
 
